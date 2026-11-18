@@ -1,0 +1,82 @@
+name: Docs-only auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: docs-only-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    # Do not mint the App token for drafts, other bases, or before the App is configured.
+    if: github.event.pull_request.base.ref == 'master' && !github.event.pull_request.draft && vars.DOCS_MERGE_BOT_APP_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.DOCS_MERGE_BOT_APP_ID }}
+          private-key: ${{ secrets.DOCS_MERGE_BOT_PRIVATE_KEY }}
+
+      - name: Merge docs-only PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            // Folders starting with "." (.github, .claude, ...) are tooling, not documentation.
+            const DOCS_PATH = /^(?:[^./][^/]*\/)*docs\/[^/]+\.md$/;
+            const TARGET_BASE = 'master';
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+
+            // getContent follows in-repo symlinks and reports them as files, so read the git tree mode.
+            const treeCache = new Map();
+            async function isRegularFile(path, ref) {
+              const slash = path.lastIndexOf('/');
+              const dir = path.slice(0, slash);
+              if (!treeCache.has(dir)) {
+                const { data } = await github.rest.git.getTree({ owner, repo, tree_sha: `${ref}:${dir}` });
+                treeCache.set(dir, data.tree);
+              }
+              const entry = treeCache.get(dir).find(e => e.path === path.slice(slash + 1));
+              return entry?.type === 'blob' && entry.mode !== '120000';
+            }
+
+            async function filesAreDocsOnly(pr) {
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                owner, repo, pull_number: pr.number, per_page: 100,
+              });
+              // listFiles returns at most 3000 files; fail closed when the list may be truncated.
+              if (files.length === 0 || files.length !== pr.changed_files || pr.changed_files >= 3000) return false;
+              for (const f of files) {
+                if (!DOCS_PATH.test(f.filename)) return false;
+                if (f.previous_filename && !DOCS_PATH.test(f.previous_filename)) return false;
+                if (f.status === 'removed') continue;
+                if (!(await isRegularFile(f.filename, pr.head.sha))) return false;
+              }
+              return true;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            if (pr.state !== 'open' || pr.draft || pr.base.ref !== TARGET_BASE) {
+              core.info(`#${number}: skipped (closed, draft, or base is not ${TARGET_BASE})`);
+            } else if (!(await filesAreDocsOnly(pr))) {
+              core.info(`#${number}: skipped (changes outside docs/*.md)`);
+            } else {
+              try {
+                await github.rest.pulls.merge({
+                  owner, repo, pull_number: number, sha: pr.head.sha, merge_method: 'squash',
+                });
+                core.notice(`#${number}: merged docs-only PR`);
+              } catch (error) {
+                // 405: not mergeable (rules, conflicts); 409: head moved since the check. Both are expected.
+                if (error.status !== 405 && error.status !== 409) throw error;
+                core.warning(`#${number}: merge rejected (${error.status}): ${error.message}`);
+              }
+            }
