@@ -30,7 +30,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             // Folders starting with "." (.github, .claude, ...) are tooling, not documentation.
-            const DOCS_PATH = /^(?:[^./][^/]*\/)*docs\/[^/]+\.md$/;
+            const DOCS_PATH = /^(?:[^./][^/]*\/)*docs\/(?:[^./][^/]*\/)*[^/]+\.md$/;
             const TARGET_BASE = 'master';
             const { owner, repo } = context.repo;
             const number = context.payload.pull_request.number;

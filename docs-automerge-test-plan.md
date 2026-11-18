@@ -2,7 +2,7 @@
 
 Written for: you, creating the test repo and GitHub App by hand, and Claude, who runs the test phases from the command line.
 
-Workflow under test: `.github/workflows/docs-only-automerge.yml` at core-baseline commit `60ad6dac8e`.
+Workflow under test: `.github/workflows/docs-only-automerge.yml` at core-baseline commit `60ad6dac8e`, plus the `DOCS_PATH` change in section 1.
 
 Nothing in this plan has been run yet. Creating the repo and the App are outward-facing steps and start only when you say go.
 
@@ -17,7 +17,7 @@ Triggers on PR `opened`, `reopened`, `synchronize`, `ready_for_review`.
 3. It lists the PR files. Every file must match the docs rule. Every non-deleted file must be a regular file, not a symlink.
 4. If all checks pass, it squash-merges at the PR head SHA. The merge is performed by the App.
 
-**Docs rule.** A path matches when it has the form `docs/<name>.md`, optionally nested under non-dot folders (`src/docs/a.md` matches). The file extension must be lowercase `.md`. Folders starting with `.` never count, so `.github/docs/a.md` does not match. `docs/sub/a.md` does not match, because only one level sits under `docs/`.
+**Docs rule.** A path matches `**/docs/**/*.md`: a folder named `docs` at any depth, with any number of sub-folders under it, ending in a `.md` file. Folders starting with `.` never count, at any level, so `.github/docs/a.md` and `docs/.hidden/a.md` do not match. The file extension must be lowercase `.md`. `docs/a.md`, `src/docs/a.md` and `docs/sub/deep/a.md` match.
 
 **Renames** require both the old and the new path to match. **Deletes** are always allowed.
 
@@ -42,7 +42,7 @@ Triggers on PR `opened`, `reopened`, `synchronize`, `ready_for_review`.
 - **Squash merging must be enabled** in repo settings. The bot always squashes.
 - **Your token needs the `workflow` scope** (classic PAT) or `Workflows: Read and write` (fine-grained) to push anything that touches `.github/workflows/`. Without it, the initial push in Part A is rejected.
 - **Branch rulesets** (needed only for E1–E2) are not available on private repos of a personal Free account. Use a public sandbox, or a private one on a plan that supports rulesets.
-- **Tested version matters.** The sandbox copy of the workflow must match `60ad6dac8e`. Re-copy it if the file changes.
+- **Tested version matters.** The sandbox copy of the workflow must match the local copy with the `DOCS_PATH` change. Re-copy it if the file changes. Deploy by pushing to `master`: a workflow edit is not docs-only, so the bot will not merge it.
 
 ---
 
@@ -190,7 +190,7 @@ Wait about 20 seconds for the run to start. If the newest run is older than the 
 
 ```bash
 RUN=$(gh run list -R "$R" --workflow docs-only-automerge.yml -L 1 --json databaseId -q '.[0].databaseId')
-gh run watch "$RUN" -R "$R" --exit-status      # non-zero exit is expected in E4
+gh run watch "$RUN" -R "$R" --exit-status      # non-zero exit means the run failed
 gh run view "$RUN" -R "$R" --json conclusion,jobs -q '.conclusion, (.jobs[] | "\(.name): \(.conclusion)")'
 gh run view "$RUN" -R "$R" --log | grep -E "#$N:|##\[(error|warning)\]"
 gh pr view "$N" -R "$R" --json state,isDraft,mergedBy -q '"state=\(.state) draft=\(.isDraft) mergedBy=\(.mergedBy.login)"'
@@ -222,6 +222,7 @@ Then do Parts B and C.
 | H2 | `t/h2-edit-multi` | modify `docs/guide.md`; add `docs/a.md` and `docs/b.md` | merged |
 | H3 | `t/h3-delete-rename` | `git rm docs/old.md`; `git mv docs/guide.md docs/guide-renamed.md` | merged (delete and in-docs rename both allowed) |
 | H4 | `t/h4-nested` | add `src/docs/nested.md` | merged. This documents current behavior: any non-dot parent folder qualifies. See section 7. |
+| H7 | `t/h7-deep` | add `docs/sub/deep.md` | merged. Nested under sub-folders of `docs/`, any depth. |
 | H5 | `t/h5-draft` | add `docs/draft.md`, open with `--draft` | job `skipped` while draft. Then `gh pr ready "$N" -R "$R"` → merged. |
 | H6 | `t/h6-sync` | add `docs/sync.md` **and** change `README.md`, push, open PR | first run: `skipped`. Then `git checkout master -- README.md`, commit, push (`synchronize`) → merged. |
 
@@ -232,7 +233,7 @@ Each case must end with the log line `#N: skipped (changes outside docs/*.md)`, 
 | ID | Branch | Change | Why it is rejected |
 |---|---|---|---|
 | N1 | `t/n1-mixed` | `README.md` change plus `docs/mixed.md` | root file outside docs |
-| N2 | `t/n2-deep` | add `docs/sub/deep.md` | nested below `docs/` |
+| N2 | `t/n2-dot-in-docs` | add `docs/.hidden/deep.md` | dot folder under `docs/` |
 | N3 | `t/n3-image` | add `docs/image.png` (`printf 'x' > docs/image.png`) | not `.md` |
 | N4 | `t/n4-dot` | add `.github/docs/hidden.md` | dot folder |
 | N5 | `t/n5-txt` | add `docs/notes.txt` | not `.md` |
@@ -273,13 +274,6 @@ git commit -m "N9: symlink in docs"
 3. Expect: green with `merge rejected (405)` warning. PR stays open.
 4. Re-tick **Allow squash merging**.
 
-**E4: broken private key.**
-
-1. Settings → Secrets → edit `DOCS_MERGE_BOT_PRIVATE_KEY`. Value: `-----BEGIN RSA PRIVATE KEY-----` / `bogus` / `-----END RSA PRIVATE KEY-----`.
-2. Case `t/e4-badkey`, add `docs/e4.md`, open PR (P).
-3. Expect: job **red** at step `Create GitHub App token`. Nothing merged. PR stays open.
-4. Restore: App settings → Credentials → Key pairs → **New key**, paste the new `.pem` into the secret, then delete the old key under Key pairs.
-
 **Not tested:** 409 (head moved between the check and the merge). It is hard to trigger on purpose. Covered by reading the code only.
 
 ### D5. Optional: fork PR
@@ -301,13 +295,13 @@ Record each row after running it.
 | H2 | merged | | | | |
 | H3 | merged | | | | |
 | H4 | merged | | | | |
+| H7 | merged | | | | |
 | H5 | skipped, then merged | | | | |
 | H6 | skipped, then merged | | | | |
 | N1–N11 | skipped, open | | | | |
 | E1 | green, 405 warning, open | | | | |
 | E2 | merged | | | | |
 | E3 | green, 405 warning, open | | | | |
-| E4 | red, nothing merged | | | | |
 | D5 | merged (current code) | | | | optional |
 
 If a clean PR gets a 405 warning, re-run the job before concluding the merge is blocked. A fresh PR may not have its mergeability computed yet. This is possible, not verified.
@@ -325,7 +319,7 @@ If a clean PR gets a 405 warning, re-run the job before concluding the merge is 
 These are not part of the sandbox test. Decide them before the workflow goes to PDFTronCore.
 
 1. **Fork PRs auto-merge.** There is no check that the PR head is in the same repo. `pull_request_target` gives fork PRs access to the base repo's secrets. Fix: add `github.event.pull_request.head.repo.full_name == github.repository` to the job `if:`. Test D5 shows the current behavior.
-2. **Any non-dot `docs/` folder qualifies.** In the current core-baseline tree, 12 files under `breakpad/docs/*.md` match. That is third-party code. If only root `docs/` should count, change `DOCS_PATH` to `/^docs\/[^/]+\.md$/`. Test H4 shows the current behavior.
+2. **Any non-dot `docs/` folder qualifies, at any depth.** Rule is now `**/docs/**/*.md` (H7 covers sub-folders). The old count of 12 files under `breakpad/docs/*.md` is now a lower bound; re-count in core-baseline. That is third-party code. If only root `docs/` should count, change `DOCS_PATH` to `/^docs\/(?:[^./][^/]*\/)*[^/]+\.md$/`. Test H4 shows `src/docs/` qualifies today.
 3. **Required reviews.** If `master` requires approvals, the bot's merge is rejected (405) and logged as a warning. It merges only if the App is on the ruleset bypass list. Decide whether the bot may bypass review.
 4. **Rejections are silent.** A 405 or 409 leaves the PR open with a green job. Nothing retries it.
 
