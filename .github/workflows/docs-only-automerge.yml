@@ -80,3 +80,5 @@ jobs:
                 core.warning(`#${number}: merge rejected (${error.status}): ${error.message}`);
               }
             }
+
+# test
