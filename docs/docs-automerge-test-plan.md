@@ -4,7 +4,7 @@ Written for: you, creating the test repo and GitHub App by hand, and Claude, who
 
 Workflow under test: `.github/workflows/docs-only-automerge.yml` at core-baseline commit `60ad6dac8e`, plus the `DOCS_PATH` change in section 1.
 
-Nothing in this plan has been run yet. Creating the repo and the App are outward-facing steps and start only when you say go.
+Results and App setup steps: see `docs-automerge-test-report.md`.
 
 ---
 
@@ -198,21 +198,7 @@ gh pr view "$N" -R "$R" --json state,isDraft,mergedBy -q '"state=\(.state) draft
 
 A **merged** result has `state=MERGED` and `mergedBy` ending in `[bot]`. That confirms the App did the merge, not you.
 
-A **job skipped** result has the job conclusion `skipped` and no `#N:` line. Draft, wrong base, and missing variable all produce this.
-
-### D1. Gate tests
-
-**G1: variable missing.** Run this *after Part A and before Part B*.
-
-- Case: branch `t/g1-gate`, add `docs/gate.md`, open the PR (P).
-- Expect: job `skipped`. PR stays open. No token minted.
-
-Then do Parts B and C.
-
-**G2: variable present.** Run after Part C.
-
-- Case: on `t/g1-gate`, `git commit --allow-empty -m "G2: retrigger" && git push`.
-- Expect: `merged`. `mergedBy` ends in `[bot]`.
+A **job skipped** result has the job conclusion `skipped` and no `#N:` line. Draft and wrong base both produce this.
 
 ### D2. Must merge
 
@@ -265,8 +251,6 @@ git commit -m "N9: symlink in docs"
 1. Edit the ruleset → **Bypass list** → add the App. If the UI does not offer the App here, skip E2 and say so in results.
 2. Case `t/e2-bypass`, add `docs/e2.md`, open PR (P).
 3. Expect: merged, `mergedBy` ends in `[bot]`.
-4. Delete the `master-review` ruleset before D5.
-
 **E3: squash disabled.**
 
 1. Settings → General → Pull Requests: untick **Allow squash merging**. Keep merge commits enabled.
@@ -276,21 +260,12 @@ git commit -m "N9: symlink in docs"
 
 **Not tested:** 409 (head moved between the check and the merge). It is hard to trigger on purpose. Covered by reading the code only.
 
-### D5. Optional: fork PR
-
-Needs a second GitHub account.
-
-1. Second account: `gh repo fork $R` (or fork in the UI), add `docs/fork.md` on a branch, open a PR to `master` of the sandbox.
-2. Current code has no fork check. Expect: **merged**. This is the policy question in section 7, item 1.
-
 ### D6. Results
 
 Record each row after running it.
 
 | ID | Expected | Actual | PR # | Run ID | Notes |
 |---|---|---|---|---|---|
-| G1 | skipped, open | | | | |
-| G2 | merged | | | | |
 | H1 | merged | | | | |
 | H2 | merged | | | | |
 | H3 | merged | | | | |
@@ -302,7 +277,6 @@ Record each row after running it.
 | E1 | green, 405 warning, open | | | | |
 | E2 | merged | | | | |
 | E3 | green, 405 warning, open | | | | |
-| D5 | merged (current code) | | | | optional |
 
 If a clean PR gets a 405 warning, re-run the job before concluding the merge is blocked. A fresh PR may not have its mergeability computed yet. This is possible, not verified.
 
@@ -318,7 +292,7 @@ If a clean PR gets a 405 warning, re-run the job before concluding the merge is 
 
 These are not part of the sandbox test. Decide them before the workflow goes to PDFTronCore.
 
-1. **Fork PRs auto-merge.** There is no check that the PR head is in the same repo. `pull_request_target` gives fork PRs access to the base repo's secrets. Fix: add `github.event.pull_request.head.repo.full_name == github.repository` to the job `if:`. Test D5 shows the current behavior.
+1. **Fork PRs auto-merge.** There is no check that the PR head is in the same repo. `pull_request_target` gives fork PRs access to the base repo's secrets. Fix: add `github.event.pull_request.head.repo.full_name == github.repository` to the job `if:`.
 2. **Any non-dot `docs/` folder qualifies, at any depth.** Rule is now `**/docs/**/*.md` (H7 covers sub-folders). The old count of 12 files under `breakpad/docs/*.md` is now a lower bound; re-count in core-baseline. That is third-party code. If only root `docs/` should count, change `DOCS_PATH` to `/^docs\/(?:[^./][^/]*\/)*[^/]+\.md$/`. Test H4 shows `src/docs/` qualifies today.
 3. **Required reviews.** If `master` requires approvals, the bot's merge is rejected (405) and logged as a warning. It merges only if the App is on the ruleset bypass list. Decide whether the bot may bypass review.
 4. **Rejections are silent.** A 405 or 409 leaves the PR open with a green job. Nothing retries it.
